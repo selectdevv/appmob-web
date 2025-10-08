@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   ChangeEvent,
+  FormEvent,
   MouseEvent as ReactMouseEvent,
   MutableRefObject,
 } from 'react'
 import {
   Box,
   Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   IconButton,
   Stack,
@@ -14,11 +19,18 @@ import {
   Typography,
 } from '@mui/material'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import html2canvas from 'html2canvas'
+import emailjs from '@emailjs/browser'
 import bg from './assets/background_publimoov.png'
 import './App.css'
 
 type NullableInputRef = MutableRefObject<HTMLInputElement | null>
 type NullableUrlRef = MutableRefObject<string | null>
+
+const EMAIL_RECIPIENT = 'felipepinto.fpm@gmail.com'
+const EMAIL_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID ?? ''
+const EMAIL_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID ?? ''
+const EMAIL_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY ?? ''
 
 function revokePreview(previewRef: NullableUrlRef) {
   if (previewRef.current) {
@@ -35,11 +47,23 @@ function App() {
   const [productFileName, setProductFileName] = useState<string>('')
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const [productPreview, setProductPreview] = useState<string | null>(null)
+  const [contactModalOpen, setContactModalOpen] = useState<boolean>(false)
+  const [contactFormValues, setContactFormValues] = useState({
+    name: '',
+    email: '',
+    whatsapp: '',
+  })
+  const [contactFormErrors, setContactFormErrors] = useState({
+    name: false,
+    email: false,
+    whatsapp: false,
+  })
 
   const logoInputRef = useRef<HTMLInputElement | null>(null)
   const productInputRef = useRef<HTMLInputElement | null>(null)
   const logoPreviewRef = useRef<string | null>(null)
   const productPreviewRef = useRef<string | null>(null)
+  const presentationRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => () => revokePreview(logoPreviewRef), [])
   useEffect(() => () => revokePreview(productPreviewRef), [])
@@ -96,6 +120,138 @@ function App() {
     (inputRef: NullableInputRef) => () => {
       inputRef.current?.click()
     }
+
+  const capturePresentationAsImage = async () => {
+    if (!presentationRef.current) {
+      return null
+    }
+    try {
+      const canvas = await html2canvas(presentationRef.current, {
+        useCORS: true,
+        backgroundColor: '#f0f4ff',
+      })
+      return canvas.toDataURL('image/png')
+    } catch (error) {
+      console.error('Falha ao gerar imagem da apresentação', error)
+      return null
+    }
+  }
+
+  const downloadPresentationImage = (dataUrl: string) => {
+    const link = document.createElement('a')
+    link.href = dataUrl
+    link.download = `publimoov-apresentacao-${Date.now()}.png`
+    link.click()
+  }
+
+  const sendPresentationByEmail = async (dataUrl: string) => {
+    if (!EMAIL_SERVICE_ID || !EMAIL_TEMPLATE_ID || !EMAIL_PUBLIC_KEY) {
+      console.error('Configurações do EmailJS ausentes. Verifique as variáveis de ambiente.')
+      return false
+    }
+
+    try {
+      await emailjs.send(
+        EMAIL_SERVICE_ID,
+        EMAIL_TEMPLATE_ID,
+        {
+          to_email: EMAIL_RECIPIENT,
+          company_name: companyName || 'Nome da empresa',
+          information: information || 'Informações do produto',
+          price: formatPrice(value) || 'R$ 0,00',
+          customer_name: contactFormValues.name,
+          customer_email: contactFormValues.email,
+          customer_whatsapp: contactFormValues.whatsapp,
+          attachments: [
+            {
+              name: `publimoov-apresentacao-${Date.now()}.png`,
+              data: dataUrl,
+            },
+          ],
+        },
+        {
+          publicKey: EMAIL_PUBLIC_KEY,
+        },
+      )
+      return true
+    } catch (error) {
+      console.error('Falha ao enviar email com a apresentação', error)
+      return false
+    }
+  }
+
+  const handleOpenContactModal = () => {
+    setContactModalOpen(true)
+  }
+
+  const resetContactForm = () => {
+    setContactFormValues({
+      name: '',
+      email: '',
+      whatsapp: '',
+    })
+    setContactFormErrors({
+      name: false,
+      email: false,
+      whatsapp: false,
+    })
+  }
+
+  const handleCloseContactModal = () => {
+    setContactModalOpen(false)
+    resetContactForm()
+  }
+
+  const handleContactFormChange =
+    (field: 'name' | 'email' | 'whatsapp') =>
+      (event: ChangeEvent<HTMLInputElement>) => {
+        const nextValue = event.target.value
+        setContactFormValues((previous) => ({
+          ...previous,
+          [field]: nextValue,
+        }))
+        setContactFormErrors((previous) => ({
+          ...previous,
+          [field]: nextValue.trim() === '',
+        }))
+      }
+
+  const handleSubmitContactForm = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const trimmedValues = Object.fromEntries(
+      Object.entries(contactFormValues).map(([key, value]) => [
+        key,
+        value.trim(),
+      ]),
+    ) as typeof contactFormValues
+
+    const errors = {
+      name: trimmedValues.name === '',
+      email: trimmedValues.email === '',
+      whatsapp: trimmedValues.whatsapp === '',
+    }
+
+    setContactFormErrors(errors)
+
+    const hasError = Object.values(errors).some(Boolean)
+    if (hasError) {
+      return
+    }
+
+    const dataUrl = await capturePresentationAsImage()
+    if (!dataUrl) {
+      return
+    }
+
+    downloadPresentationImage(dataUrl)
+    const emailSent = await sendPresentationByEmail(dataUrl)
+
+    if (emailSent) {
+      handleCloseContactModal()
+    } else {
+      window.alert('Não foi possível enviar o email. Verifique as configurações e tente novamente.')
+    }
+  }
 
   const formatPrice = (rawValue: string) => {
     if (!rawValue) return ''
@@ -248,7 +404,7 @@ function App() {
                 </Button>
               </FormControl>
 
-              <Button type="submit" variant="contained">
+              <Button type="button" variant="contained" onClick={handleOpenContactModal}>
                 Enviar
               </Button>
             </Stack>
@@ -262,7 +418,9 @@ function App() {
             backgroundRepeat: 'no-repeat',
             backgroundPosition: 'center',
             backgroundSize: 'contain',
+            backgroundColor: '#f0f4ff',
           }}
+          ref={presentationRef}
         >
           <div className="relative w-full h-full flex items-center justify-center">
             <Box
@@ -386,6 +544,58 @@ function App() {
           </div>
         </div>
       </div>
+
+      <Dialog
+        open={contactModalOpen}
+        onClose={handleCloseContactModal}
+        aria-labelledby="contact-dialog-title"
+      >
+        <DialogTitle id="contact-dialog-title">
+          Informações de contato
+        </DialogTitle>
+        <form onSubmit={handleSubmitContactForm} noValidate>
+          <DialogContent
+            sx={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 360 }}
+          >
+            <TextField
+              label="Nome"
+              variant="outlined"
+              value={contactFormValues.name}
+              onChange={handleContactFormChange('name')}
+              required
+              error={contactFormErrors.name}
+              helperText={contactFormErrors.name ? 'Campo obrigatório' : ' '}
+            />
+            <TextField
+              label="Email"
+              variant="outlined"
+              type="email"
+              value={contactFormValues.email}
+              onChange={handleContactFormChange('email')}
+              required
+              error={contactFormErrors.email}
+              helperText={contactFormErrors.email ? 'Campo obrigatório' : ' '}
+            />
+            <TextField
+              label="Whatsapp"
+              variant="outlined"
+              value={contactFormValues.whatsapp}
+              onChange={handleContactFormChange('whatsapp')}
+              required
+              error={contactFormErrors.whatsapp}
+              helperText={contactFormErrors.whatsapp ? 'Campo obrigatório' : ' '}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={handleCloseContactModal} color="inherit">
+              Cancelar
+            </Button>
+            <Button type="submit" variant="contained">
+              Enviar
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
     </main>
   )
 }
