@@ -1,11 +1,11 @@
 const getBackendUrl = (): string => {
   const envUrl = import.meta.env.VITE_BACKEND_URL
   
-  if (!envUrl) {
-    throw new Error('VITE_BACKEND_URL não está configurada no arquivo .env')
+  if (envUrl) {
+    return envUrl.trim().replace(/\/$/, '')
   }
   
-  return envUrl.trim().replace(/\/$/, '')
+  return 'https://appmob-back.onrender.com'
 }
 
 export const BACKEND_URL = getBackendUrl()
