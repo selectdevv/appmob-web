@@ -17,19 +17,21 @@ export const api = {
     const { method = 'GET', headers = {}, body, timeout = 60000 } = config
     
     const token = localStorage.getItem('token')
-    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {}
-    
+    const requestHeaders: Record<string, string> = {
+      ...defaultHeaders,
+      ...headers,
+    }
+    if (token) {
+      requestHeaders['Authorization'] = `Bearer ${token}`
+    }
+
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeout)
     
     try {
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         method,
-        headers: {
-          ...defaultHeaders,
-          ...authHeaders,
-          ...headers,
-        },
+        headers: requestHeaders,
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       })
