@@ -7,13 +7,8 @@ import MenuItem from '@mui/material/MenuItem'
 import DashboardLayout from '../components/layout/DashboardLayout'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
-import {
-  deleteStoredCompany,
-  getStoredCompanies,
-  type Company,
-  type PlanType,
-  type ProfileType,
-} from '../lib/companyStorage'
+import { useCompanies, useDeleteCompany } from '../hooks/useCompanies'
+import type { PlanType, ProfileType } from '../lib/companyStorage'
 
 interface CompaniesLocationState {
   status?: 'created' | 'updated'
@@ -22,7 +17,8 @@ interface CompaniesLocationState {
 const Companies = () => {
   const navigate = useNavigate()
   const location = useLocation()
-  const [companies, setCompanies] = useState<Company[]>(() => getStoredCompanies())
+  const { data: companies = [], isLoading, error } = useCompanies()
+  const deleteCompanyMutation = useDeleteCompany()
   const [search, setSearch] = useState('')
   const [planFilter, setPlanFilter] = useState<PlanType | ''>('')
   const [profileFilter, setProfileFilter] = useState<ProfileType | ''>('')
@@ -64,10 +60,14 @@ const Companies = () => {
     navigate('/empresas/nova')
   }
 
-  const handleDeleteCompany = (companyId: string) => {
-    setCompanies(deleteStoredCompany(companyId))
-    setMenuAnchorEl(null)
-    setMenuCompanyId(null)
+  const handleDeleteCompany = async (companyId: string) => {
+    try {
+      await deleteCompanyMutation.mutateAsync(companyId)
+      setMenuAnchorEl(null)
+      setMenuCompanyId(null)
+    } catch (err: any) {
+      console.error('Erro ao deletar empresa:', err)
+    }
   }
 
   const handleEditCompany = (companyId: string) => {
@@ -99,7 +99,7 @@ const Companies = () => {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Empresas</h1>
-              <p className="mt-2 text-sm text-gray-500">Lista local com filtros e busca, pronta para integrar API.</p>
+              <p className="mt-2 text-sm text-gray-500">Lista de empresas com filtros e busca.</p>
             </div>
             <div className="w-full sm:w-52">
               <Button type="button" variant="primary" onClick={handleAddCompany}>
@@ -169,7 +169,21 @@ const Companies = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredCompanies.map((company) => (
+                {isLoading && (
+                  <tr>
+                    <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={9}>
+                      Carregando empresas...
+                    </td>
+                  </tr>
+                )}
+                {error && (
+                  <tr>
+                    <td className="px-4 py-6 text-center text-sm text-red-500" colSpan={9}>
+                      Erro ao carregar empresas. Tente novamente.
+                    </td>
+                  </tr>
+                )}
+                {!isLoading && !error && filteredCompanies.map((company) => (
                   <tr key={company.id} className="border-b border-gray-100 align-top text-gray-700">
                     <td className="px-4 py-3">{company.clientName}</td>
                     <td className="px-4 py-3">{company.responsible}</td>
@@ -186,7 +200,7 @@ const Companies = () => {
                     </td>
                   </tr>
                 ))}
-                {filteredCompanies.length === 0 && (
+                {!isLoading && !error && filteredCompanies.length === 0 && (
                   <tr>
                     <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={9}>
                       Nenhuma empresa encontrada para os filtros atuais.

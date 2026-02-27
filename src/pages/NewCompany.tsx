@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import BackIconButton from '../components/ui/BackIconButton'
 import DashboardLayout from '../components/layout/DashboardLayout'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
-import {
-  addStoredCompany,
-  getStoredCompanyById,
-  updateStoredCompany,
-  type Company,
-  type PlanType,
-  type ProfileType,
-} from '../lib/companyStorage'
+import { useCompany, useCreateCompany, useUpdateCompany } from '../hooks/useCompanies'
+import { useCheckCampaignLimit } from '../hooks/useCampaigns'
+import type { PlanType, ProfileType } from '../lib/companyStorage'
 
 interface CompanyFormData {
   clientName: string
@@ -35,31 +30,22 @@ const initialFormData: CompanyFormData = {
   profile: '',
 }
 
-const createCompanyId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`
-
 const NewCompany = () => {
   const navigate = useNavigate()
   const { companyId } = useParams<{ companyId: string }>()
   const isEditMode = Boolean(companyId)
 
+  const { data: existingCompany, isLoading: isLoadingCompany, error: companyError } = useCompany(companyId)
+  const { data: limitCheck } = useCheckCampaignLimit(companyId)
+  const createCompanyMutation = useCreateCompany()
+  const updateCompanyMutation = useUpdateCompany()
+
   const [formData, setFormData] = useState<CompanyFormData>(initialFormData)
   const [error, setError] = useState<string | null>(null)
-  const [isCompanyNotFound, setIsCompanyNotFound] = useState(false)
-
-  const existingCompany = useMemo(() => {
-    if (!companyId) {
-      return null
-    }
-    return getStoredCompanyById(companyId)
-  }, [companyId])
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    if (!isEditMode) {
-      return
-    }
-
-    if (!existingCompany) {
-      setIsCompanyNotFound(true)
+    if (!isEditMode || !existingCompany) {
       return
     }
 
@@ -95,55 +81,89 @@ const NewCompany = () => {
     }
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
+    setIsSubmitting(true)
 
-    const { clientName, responsible, email, phone, planValidity, campaigns, plan, profile } = formData
+    try {
+      const { clientName, responsible, email, phone, planValidity, campaigns, plan, profile } = formData
 
-    if (!clientName || !responsible || !email || !phone || !planValidity || !campaigns || !plan || !profile) {
-      setError('Preencha todos os campos obrigatorios.')
-      return
+      if (!clientName || !responsible || !email || !phone || !planValidity || !campaigns || !plan || !profile) {
+        setError('Preencha todos os campos obrigatorios.')
+        setIsSubmitting(false)
+        return
+      }
+
+      const parsedPlanValidity = Number(planValidity)
+      const parsedCampaigns = Number(campaigns)
+
+      if (!Number.isInteger(parsedPlanValidity) || parsedPlanValidity <= 0) {
+        setError('Validade do plano deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!Number.isInteger(parsedCampaigns) || parsedCampaigns <= 0) {
+        setError('Campanhas deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (isEditMode && limitCheck) {
+        const currentCampaignsCount = limitCheck.current
+        if (parsedCampaigns < currentCampaignsCount) {
+          setError(`Voce tem ${currentCampaignsCount} campanha(s) cadastrada(s). O limite nao pode ser menor que o numero atual de campanhas. Exclua algumas campanhas antes de reduzir o limite.`)
+          setIsSubmitting(false)
+          return
+        }
+      }
+
+      const companyData: {
+        clientName: string
+        responsible: string
+        email: string
+        phone: string
+        planValidity: number
+        campaigns?: number
+        plan: PlanType
+        profile: ProfileType
+      } = {
+        clientName: clientName.trim(),
+        responsible: responsible.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        planValidity: parsedPlanValidity,
+        plan,
+        profile,
+      }
+
+      companyData.campaigns = parsedCampaigns
+
+      if (isEditMode && companyId) {
+        await updateCompanyMutation.mutateAsync({ companyId, data: companyData })
+        navigate('/empresas', { state: { status: 'updated' } })
+      } else {
+        await createCompanyMutation.mutateAsync(companyData)
+        navigate('/empresas', { state: { status: 'created' } })
+      }
+    } catch (err: any) {
+      setError(err.message || 'Erro ao salvar empresa. Tente novamente.')
+      setIsSubmitting(false)
     }
-
-    const parsedPlanValidity = Number(planValidity)
-    const parsedCampaigns = Number(campaigns)
-
-    if (!Number.isInteger(parsedPlanValidity) || parsedPlanValidity <= 0) {
-      setError('Validade do plano deve ser um numero inteiro positivo.')
-      return
-    }
-
-    if (!Number.isInteger(parsedCampaigns) || parsedCampaigns <= 0) {
-      setError('Campanhas deve ser um numero inteiro positivo.')
-      return
-    }
-
-    const baseId = isEditMode && existingCompany ? existingCompany.id : createCompanyId()
-
-    const company: Company = {
-      id: baseId,
-      clientName: clientName.trim(),
-      responsible: responsible.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      planValidity: parsedPlanValidity,
-      campaigns: parsedCampaigns,
-      plan,
-      profile,
-    }
-
-    if (isEditMode) {
-      updateStoredCompany(company)
-      navigate('/empresas', { state: { status: 'updated' } })
-      return
-    }
-
-    addStoredCompany(company)
-    navigate('/empresas', { state: { status: 'created' } })
   }
 
-  if (isCompanyNotFound) {
+  if (isEditMode && isLoadingCompany) {
+    return (
+      <DashboardLayout activeItem="empresas">
+        <div className="mx-auto w-full max-w-4xl rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+          <h1 className="text-3xl font-bold text-gray-900">Carregando...</h1>
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  if (isEditMode && (companyError || !existingCompany)) {
     return (
       <DashboardLayout activeItem="empresas">
         <div className="mx-auto w-full max-w-4xl rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
@@ -265,8 +285,8 @@ const NewCompany = () => {
           </div>
 
           <div className="max-w-xs">
-            <Button type="submit" variant="primary">
-              {isEditMode ? 'Salvar alteracoes' : 'Cadastrar empresa'}
+            <Button type="submit" variant="primary" disabled={isSubmitting}>
+              {isSubmitting ? 'Salvando...' : isEditMode ? 'Salvar alteracoes' : 'Cadastrar empresa'}
             </Button>
           </div>
         </form>

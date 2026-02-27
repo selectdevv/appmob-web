@@ -4,9 +4,9 @@ import BackIconButton from '../components/ui/BackIconButton'
 import DashboardLayout from '../components/layout/DashboardLayout'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
-import { addStoredCampaign, type Campaign } from '../lib/campaignStorage'
-import { getStoredCompanyById } from '../lib/companyStorage'
-import { convertImageFileToDataUrl, isStorageQuotaExceededError } from '../lib/imageStorage'
+import { useCompany } from '../hooks/useCompanies'
+import { useCreateCampaign } from '../hooks/useCampaigns'
+import { convertImageFileToDataUrl } from '../lib/imageStorage'
 
 interface CampaignFormData {
   campaignName: string
@@ -24,17 +24,17 @@ const initialFormData: CampaignFormData = {
   insertionsPerHour: '',
 }
 
-const createCampaignId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`
-
 const NewCampaign = () => {
   const navigate = useNavigate()
   const { companyId } = useParams<{ companyId: string }>()
-  const company = companyId ? getStoredCompanyById(companyId) : null
+  const { data: company, isLoading: isLoadingCompany } = useCompany(companyId)
+  const createCampaignMutation = useCreateCampaign()
 
   const [formData, setFormData] = useState<CampaignFormData>(initialFormData)
   const [error, setError] = useState<string | null>(null)
   const [campaignImageDataUrl, setCampaignImageDataUrl] = useState<string | null>(null)
   const [campaignImageName, setCampaignImageName] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const navigateToCampaignList = (state?: { status: 'created' }) => {
     const targetPath = companyId ? `/empresas/${companyId}/agenda` : '/empresas'
@@ -93,68 +93,82 @@ const NewCampaign = () => {
     }
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
-
-    const { campaignName, campaignStartDate, monthlyInsertions, screensNumber, insertionsPerHour } = formData
-
-    if (!campaignName || !campaignStartDate || !monthlyInsertions || !screensNumber || !insertionsPerHour) {
-      setError('Preencha todos os campos obrigatorios.')
-      return
-    }
-
-    const monthly = Number(monthlyInsertions)
-    const screens = Number(screensNumber)
-    const perHour = Number(insertionsPerHour)
-
-    if (!Number.isInteger(monthly) || monthly <= 0) {
-      setError('INSERCOES MENSAIS deve ser um numero inteiro positivo.')
-      return
-    }
-
-    if (!Number.isInteger(screens) || screens <= 0) {
-      setError('NUMERO DE TELAS deve ser um numero inteiro positivo.')
-      return
-    }
-
-    if (!Number.isInteger(perHour) || perHour <= 0) {
-      setError('INSERCOES POR HORA deve ser um numero inteiro positivo.')
-      return
-    }
-
-    if (!companyId) {
-      setError('Empresa invalida para cadastro de campanha.')
-      return
-    }
-
-    const newCampaign: Campaign = {
-      id: createCampaignId(),
-      companyId,
-      campaignName: campaignName.trim(),
-      campaignStartDate,
-      monthlyInsertions: monthly,
-      screensNumber: screens,
-      insertionsPerHour: perHour,
-      scheduleSlots: {},
-      campaignImage: campaignImageDataUrl ?? undefined,
-      campaignImageName: campaignImageName ?? undefined,
-    }
+    setIsSubmitting(true)
 
     try {
-      addStoredCampaign(newCampaign)
+      const { campaignName, campaignStartDate, monthlyInsertions, screensNumber, insertionsPerHour } = formData
+
+      if (!campaignName || !campaignStartDate || !monthlyInsertions || !screensNumber || !insertionsPerHour) {
+        setError('Preencha todos os campos obrigatorios.')
+        setIsSubmitting(false)
+        return
+      }
+
+      const monthly = Number(monthlyInsertions)
+      const screens = Number(screensNumber)
+      const perHour = Number(insertionsPerHour)
+
+      if (!Number.isInteger(monthly) || monthly <= 0) {
+        setError('INSERCOES MENSAIS deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!Number.isInteger(screens) || screens <= 0) {
+        setError('NUMERO DE TELAS deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!Number.isInteger(perHour) || perHour <= 0) {
+        setError('INSERCOES POR HORA deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!companyId) {
+        setError('Empresa invalida para cadastro de campanha.')
+        setIsSubmitting(false)
+        return
+      }
+
+      const campaignData = {
+        campaignName: campaignName.trim(),
+        campaignStartDate,
+        monthlyInsertions: monthly,
+        screensNumber: screens,
+        insertionsPerHour: perHour,
+        scheduleSlots: {},
+        campaignImage: campaignImageDataUrl ?? undefined,
+        campaignImageName: campaignImageName ?? undefined,
+      }
+
+      await createCampaignMutation.mutateAsync({ companyId, data: campaignData })
       setFormData(initialFormData)
       setCampaignImageDataUrl(null)
       setCampaignImageName(null)
       navigateToCampaignList({ status: 'created' })
-    } catch (saveError) {
-      if (isStorageQuotaExceededError(saveError)) {
-        setError('Nao foi possivel salvar. A imagem e muito grande para armazenamento local.')
-        return
+    } catch (err: any) {
+      if (err.code === 'CAMPAIGN_LIMIT_REACHED' || err.message?.includes('Limite de campanhas')) {
+        setError(err.message || 'Limite de campanhas atingido. Para criar mais campanhas, edite o plano da empresa.')
+      } else {
+        setError(err.message || 'Nao foi possivel salvar a campanha. Tente novamente.')
       }
-
-      setError('Nao foi possivel salvar a campanha. Tente novamente.')
+      setIsSubmitting(false)
     }
+  }
+
+  if (isLoadingCompany) {
+    return (
+      <DashboardLayout activeItem="empresas">
+        <div className="mx-auto w-full max-w-4xl rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+          <h1 className="text-3xl font-bold text-gray-900">Carregando...</h1>
+        </div>
+      </DashboardLayout>
+    )
   }
 
   if (!company) {
@@ -257,8 +271,8 @@ const NewCampaign = () => {
           </div>
 
           <div className="max-w-xs">
-            <Button type="submit" variant="primary">
-              Cadastrar campanha
+            <Button type="submit" variant="primary" disabled={isSubmitting}>
+              {isSubmitting ? 'Cadastrando...' : 'Cadastrar campanha'}
             </Button>
           </div>
         </form>

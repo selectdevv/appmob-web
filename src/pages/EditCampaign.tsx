@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import EditIcon from '@mui/icons-material/Edit'
 import VisibilityIcon from '@mui/icons-material/Visibility'
@@ -9,9 +9,10 @@ import WeeklyScheduleTable from '../components/schedule/WeeklyScheduleTable'
 import BackIconButton from '../components/ui/BackIconButton'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
-import { getStoredCampaignById, updateStoredCampaign, type Campaign } from '../lib/campaignStorage'
-import { getStoredCompanyById } from '../lib/companyStorage'
-import { convertImageFileToDataUrl, isStorageQuotaExceededError } from '../lib/imageStorage'
+import { useCompany } from '../hooks/useCompanies'
+import { useCampaign, useUpdateCampaign } from '../hooks/useCampaigns'
+import { convertImageFileToDataUrl } from '../lib/imageStorage'
+import type { UpdateCampaignRequest } from '../services/campaignService'
 
 interface CampaignFormData {
   campaignName: string
@@ -40,7 +41,7 @@ const areSlotsEqual = (a: Record<string, boolean>, b: Record<string, boolean>): 
   return keysA.every((key) => a[key] === b[key])
 }
 
-const getCampaignImageName = (campaign: Campaign): string | null => {
+const getCampaignImageName = (campaign: { campaignImageName?: string; campaignImage?: string }): string | null => {
   if (campaign.campaignImageName) {
     return campaign.campaignImageName
   }
@@ -56,8 +57,9 @@ const EditCampaign = () => {
   const navigate = useNavigate()
   const { companyId, campaignId } = useParams<{ companyId: string; campaignId: string }>()
 
-  const company = useMemo(() => (companyId ? getStoredCompanyById(companyId) : null), [companyId])
-  const campaign = useMemo(() => (campaignId ? getStoredCampaignById(campaignId) : null), [campaignId])
+  const { data: company, isLoading: isLoadingCompany } = useCompany(companyId)
+  const { data: campaign, isLoading: isLoadingCampaign } = useCampaign(campaignId)
+  const updateCampaignMutation = useUpdateCampaign()
   const isValidCampaign = Boolean(campaign && companyId && campaign.companyId === companyId)
 
   const [isEditingInfo, setIsEditingInfo] = useState(false)
@@ -72,6 +74,7 @@ const EditCampaign = () => {
   const [isImagePreviewOpen, setIsImagePreviewOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleBackToCampaignList = () => {
     const targetPath = companyId ? `/empresas/${companyId}/agenda` : '/empresas'
@@ -172,74 +175,95 @@ const EditCampaign = () => {
   const hasImageNameChanges = campaignImageName !== initialCampaignImageNameSnapshot
   const canSaveChanges = hasFormChanges || hasScheduleChanges || hasImageChanges || hasImageNameChanges
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
     setSuccessMessage(null)
-
-    if (!campaign || !isValidCampaign) {
-      setError('Campanha invalida para edicao.')
-      return
-    }
-
-    if (!canSaveChanges) {
-      return
-    }
-
-    const { campaignName, campaignStartDate, monthlyInsertions, screensNumber, insertionsPerHour } = formData
-
-    if (!campaignName || !campaignStartDate || !monthlyInsertions || !screensNumber || !insertionsPerHour) {
-      setError('Preencha todos os campos obrigatorios.')
-      return
-    }
-
-    const monthly = Number(monthlyInsertions)
-    const screens = Number(screensNumber)
-    const perHour = Number(insertionsPerHour)
-
-    if (!Number.isInteger(monthly) || monthly <= 0) {
-      setError('Insercoes mensais deve ser um numero inteiro positivo.')
-      return
-    }
-
-    if (!Number.isInteger(screens) || screens <= 0) {
-      setError('Numero de telas deve ser um numero inteiro positivo.')
-      return
-    }
-
-    if (!Number.isInteger(perHour) || perHour <= 0) {
-      setError('Insercoes por hora deve ser um numero inteiro positivo.')
-      return
-    }
-
-    const updatedCampaign: Campaign = {
-      ...campaign,
-      campaignName: campaignName.trim(),
-      campaignStartDate,
-      monthlyInsertions: monthly,
-      screensNumber: screens,
-      insertionsPerHour: perHour,
-      scheduleSlots: checkedSlots,
-      campaignImage: campaignImageDataUrl ?? undefined,
-      campaignImageName: campaignImageName ?? undefined,
-    }
+    setIsSubmitting(true)
 
     try {
-      updateStoredCampaign(updatedCampaign)
+      if (!campaign || !isValidCampaign || !campaignId) {
+        setError('Campanha invalida para edicao.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!canSaveChanges) {
+        setIsSubmitting(false)
+        return
+      }
+
+      const { campaignName, campaignStartDate, monthlyInsertions, screensNumber, insertionsPerHour } = formData
+
+      if (!campaignName || !campaignStartDate || !monthlyInsertions || !screensNumber || !insertionsPerHour) {
+        setError('Preencha todos os campos obrigatorios.')
+        setIsSubmitting(false)
+        return
+      }
+
+      const monthly = Number(monthlyInsertions)
+      const screens = Number(screensNumber)
+      const perHour = Number(insertionsPerHour)
+
+      if (!Number.isInteger(monthly) || monthly <= 0) {
+        setError('Insercoes mensais deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!Number.isInteger(screens) || screens <= 0) {
+        setError('Numero de telas deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!Number.isInteger(perHour) || perHour <= 0) {
+        setError('Insercoes por hora deve ser um numero inteiro positivo.')
+        setIsSubmitting(false)
+        return
+      }
+
+      const campaignData: UpdateCampaignRequest = {
+        campaignName: campaignName.trim(),
+        campaignStartDate,
+        monthlyInsertions: monthly,
+        screensNumber: screens,
+        insertionsPerHour: perHour,
+        scheduleSlots: checkedSlots,
+      }
+
+      if (hasImageChanges) {
+        if (campaignImageDataUrl && campaignImageDataUrl.startsWith('data:image/')) {
+          campaignData.campaignImage = campaignImageDataUrl
+          campaignData.campaignImageName = campaignImageName ?? undefined
+        } else if (campaignImageDataUrl === null) {
+          campaignData.campaignImage = undefined
+          campaignData.campaignImageName = undefined
+        }
+      }
+
+      await updateCampaignMutation.mutateAsync({ campaignId, data: campaignData })
       setInitialDataSnapshot(formData)
       setInitialCheckedSlotsSnapshot(checkedSlots)
       setInitialCampaignImageSnapshot(campaignImageDataUrl)
       setInitialCampaignImageNameSnapshot(campaignImageName)
       setIsEditingInfo(false)
       setSuccessMessage('Campanha atualizada com sucesso.')
-    } catch (saveError) {
-      if (isStorageQuotaExceededError(saveError)) {
-        setError('Nao foi possivel salvar. A imagem e muito grande para armazenamento local.')
-        return
-      }
-
-      setError('Nao foi possivel salvar as alteracoes da campanha.')
+    } catch (err: any) {
+      setError(err.message || 'Nao foi possivel salvar as alteracoes da campanha.')
+    } finally {
+      setIsSubmitting(false)
     }
+  }
+
+  if (isLoadingCompany || isLoadingCampaign) {
+    return (
+      <DashboardLayout activeItem="empresas">
+        <div className="mx-auto w-full max-w-4xl rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+          <h1 className="text-3xl font-bold text-gray-900">Carregando...</h1>
+        </div>
+      </DashboardLayout>
+    )
   }
 
   if (!company || !campaign || !isValidCampaign) {
@@ -356,8 +380,7 @@ const EditCampaign = () => {
                     type="file"
                     accept="image/*"
                     onChange={handleImageUpload}
-                    disabled={!isEditingInfo}
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm text-gray-700 transition-colors disabled:bg-gray-100 disabled:text-gray-400 file:mr-4 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm text-gray-700 transition-colors file:mr-4 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200"
                   />
                   <IconButton
                     type="button"
@@ -380,8 +403,8 @@ const EditCampaign = () => {
         <WeeklyScheduleTable checkedSlots={checkedSlots} onCheckedSlotsChange={setCheckedSlots} />
 
         <div className="mx-auto w-full max-w-xs">
-          <Button type="submit" variant="primary" disabled={!canSaveChanges}>
-            Salvar alteracoes
+          <Button type="submit" variant="primary" disabled={!canSaveChanges || isSubmitting}>
+            {isSubmitting ? 'Salvando...' : 'Salvar alteracoes'}
           </Button>
         </div>
       </form>

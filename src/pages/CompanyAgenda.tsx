@@ -3,12 +3,8 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import BackIconButton from '../components/ui/BackIconButton'
 import DashboardLayout from '../components/layout/DashboardLayout'
 import Input from '../components/ui/Input'
-import {
-  deleteStoredCampaign,
-  getStoredCampaignsByCompanyId,
-  type Campaign,
-} from '../lib/campaignStorage'
-import { getStoredCompanyById } from '../lib/companyStorage'
+import { useCompany } from '../hooks/useCompanies'
+import { useCampaigns, useDeleteCampaign, useCheckCampaignLimit } from '../hooks/useCampaigns'
 
 interface AgendaLocationState {
   status?: 'created'
@@ -18,21 +14,14 @@ const CompanyAgenda = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { companyId } = useParams<{ companyId: string }>()
-  const company = companyId ? getStoredCompanyById(companyId) : null
+  const { data: company, isLoading: isLoadingCompany } = useCompany(companyId)
+  const { data: campaigns = [], isLoading: isLoadingCampaigns } = useCampaigns(companyId)
+  const { data: limitCheck, isLoading: isLoadingLimit, error: limitError } = useCheckCampaignLimit(companyId)
+  const deleteCampaignMutation = useDeleteCampaign()
 
-  const [campaigns, setCampaigns] = useState<Campaign[]>(() =>
-    companyId ? getStoredCampaignsByCompanyId(companyId) : [],
-  )
   const [search, setSearch] = useState('')
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [infoMessage, setInfoMessage] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!companyId) {
-      return
-    }
-    setCampaigns(getStoredCampaignsByCompanyId(companyId))
-  }, [companyId])
 
   useEffect(() => {
     const state = location.state as AgendaLocationState | null
@@ -56,11 +45,22 @@ const CompanyAgenda = () => {
     })
   }, [campaigns, search])
 
-  const handleDeleteCampaign = (campaignIdToDelete: string) => {
-    deleteStoredCampaign(campaignIdToDelete)
-    if (companyId) {
-      setCampaigns(getStoredCampaignsByCompanyId(companyId))
+  const handleDeleteCampaign = async (campaignIdToDelete: string) => {
+    try {
+      await deleteCampaignMutation.mutateAsync(campaignIdToDelete)
+    } catch (err: any) {
+      console.error('Erro ao deletar campanha:', err)
     }
+  }
+
+  if (isLoadingCompany) {
+    return (
+      <DashboardLayout activeItem="empresas">
+        <div className="mx-auto w-full max-w-4xl rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+          <h1 className="text-3xl font-bold text-gray-900">Carregando...</h1>
+        </div>
+      </DashboardLayout>
+    )
   }
 
   if (!company) {
@@ -91,10 +91,17 @@ const CompanyAgenda = () => {
             <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
               <button
                 type="button"
-                onClick={() => navigate(`/empresas/${company.id}/campanhas/nova`)}
-                className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+                onClick={() => {
+                  if (limitCheck && !limitCheck.canCreate) {
+                    return
+                  }
+                  navigate(`/empresas/${company.id}/campanhas/nova`)
+                }}
+                disabled={isLoadingLimit || (limitCheck && !limitCheck.canCreate)}
+                className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed relative"
+                title={limitCheck && !limitCheck.canCreate ? limitCheck.message : undefined}
               >
-                Nova Campanha
+                {isLoadingLimit ? 'Verificando...' : 'Nova Campanha'}
               </button>
               <button
                 type="button"
@@ -110,6 +117,18 @@ const CompanyAgenda = () => {
           {infoMessage && (
             <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
               {infoMessage}
+            </div>
+          )}
+
+          {limitError && (
+            <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              Erro ao verificar limite de campanhas. Tente novamente.
+            </div>
+          )}
+
+          {limitCheck && !limitCheck.canCreate && (
+            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              {limitCheck.message}
             </div>
           )}
         </div>
@@ -144,7 +163,14 @@ const CompanyAgenda = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredCampaigns.map((campaign) => (
+                {isLoadingCampaigns && (
+                  <tr>
+                    <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={6}>
+                      Carregando campanhas...
+                    </td>
+                  </tr>
+                )}
+                {!isLoadingCampaigns && filteredCampaigns.map((campaign) => (
                   <tr key={campaign.id} className="border-b border-gray-100 align-top text-gray-700">
                     <td className="px-4 py-3">{campaign.campaignName}</td>
                     <td className="px-4 py-3">{campaign.campaignStartDate}</td>
@@ -171,7 +197,7 @@ const CompanyAgenda = () => {
                     </td>
                   </tr>
                 ))}
-                {filteredCampaigns.length === 0 && (
+                {!isLoadingCampaigns && filteredCampaigns.length === 0 && (
                   <tr>
                     <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={6}>
                       Nenhuma campanha cadastrada para esta empresa.

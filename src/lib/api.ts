@@ -26,7 +26,7 @@ export interface ApiError {
 }
 
 export const login = async (credentials: LoginRequest): Promise<AuthResponse> => {
-  const response = await api.post<AuthResponse>('/auth/login', credentials)
+  const response = await api.post<AuthResponse>('/api/auth/login', credentials)
   
   if (response.token) {
     localStorage.setItem('token', response.token)
