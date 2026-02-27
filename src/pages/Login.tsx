@@ -22,7 +22,7 @@ const Login = () => {
         email,
         password,
       })
-      
+
       navigate('/home', { replace: true })
     } catch (err: any) {
       setError(err.message || 'Erro ao fazer login. Tente novamente.')
@@ -67,27 +67,13 @@ const Login = () => {
             />
 
             <div className="pt-2">
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 variant="primary"
                 disabled={loginMutation.isPending}
               >
                 {loginMutation.isPending ? 'Entrando...' : 'Entrar'}
               </Button>
-            </div>
-
-            <div className="text-center text-sm text-gray-600 pt-2">
-              <span>Não tem uma conta? </span>
-              <a
-                href="#"
-                onClick={(e) => {
-                  e.preventDefault()
-                  navigate('/register')
-                }}
-                className="font-bold text-gray-900 hover:text-gray-700 transition-colors"
-              >
-                Criar conta
-              </a>
             </div>
           </form>
         </div>
